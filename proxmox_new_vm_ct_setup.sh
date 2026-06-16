@@ -162,7 +162,7 @@ add_user() {
          case "$STATUS" in
 
           0) if [[ -z "$USERNAME" ]]; then
-                 whiptail --msgbox "\nYou haven't entered anything, please enter a username" 10 50
+                 whiptail --msgbox "\n You haven't entered anything, please enter a\n                   username" 10 50
                  continue
              fi
 
@@ -206,7 +206,7 @@ add_user_pass() {
 
             0) if [[ -z "$USER_PASS" ]]; then
 
-                   whiptail --msgbox "\nYou haven't entered anything, please enter a user password" 10 50
+                   whiptail --msgbox "\n You haven't entered anything, please enter a\n                user password" 10 50
                    continue
                        else
                            break
@@ -231,7 +231,7 @@ add_to_sudo() {
 
     while true; do
 
-        if whiptail --title "$APP_NAME" --yesno "\n         Add $USERNAME to the sudo group?" 10 50; then
+        if whiptail --title "$APP_NAME" --yesno "\n         Add user to the sudo group?" 10 50; then
             STATUS="0"
                 else
                     STATUS="$?"
@@ -333,7 +333,7 @@ done
 
 while true; do
 
-    if whiptail --title "$APP_NAME" --yesno "\nWould you like to access SSH with an authorization key?" 10 50; then
+    if whiptail --title "$APP_NAME" --yesno "\n     Would you like to access SSH with an\n              authorization key?" 10 50; then
         STATUS="0"
             else
                 STATUS="$?"
@@ -366,7 +366,7 @@ while true; do
          case "$STATUS" in
 
              0) if [[ -z "$SSH_KEY" ]]; then
-                    whiptail --msgbox "\nYou haven't entered anything, please enter an SSH key" 10 50
+                    whiptail --msgbox "\nYou haven't entered anything, please enter an\n                   SSH key" 10 50
                     continue
                 fi
 
@@ -391,7 +391,7 @@ while true; do
          break
      fi
 
-     if whiptail --title "$APP_NAME" --yesno "\nWould you like to disable SSH password authentication" 10 50; then
+     if whiptail --title "$APP_NAME" --yesno "\n   Would you like to disable SSH password\n               authentication" 10 50; then
 
          STATUS="0"
            else
@@ -456,7 +456,7 @@ while true; do
            case "$STATUS" in
 
               0) if [[ -z "$SSH_PORT" ]]; then
-                     whiptail --msgbox "\nYou haven't entered anything, please enter a port number" 10 50
+                     whiptail --msgbox "\nYou haven't entered anything, please enter a\n                 port number" 10 50
                      continue
                  fi
 
@@ -523,7 +523,7 @@ while true; do
 
         0) if [[ -z "$NTFY_DOMAIN" ]]; then
 
-               whiptail --msgbox "\nYou haven't entered anything, please enter an NTFY domain" 10 50
+               whiptail --msgbox "\nYou haven't entered anything, please enter an\n                 NTFY domain" 10 50
                continue
                    else
                        break
@@ -549,7 +549,7 @@ while true; do
 
         0) if [[ -z "$NTFY_TOPIC" ]]; then
 
-               whiptail --msgbox "\nYou haven't entered anything, please enter an NTFY topic" 10 50
+               whiptail --msgbox "\nYou haven't entered anything, please enter an\n                 NTFY topic" 10 50
                continue
                    else
                        return 0
