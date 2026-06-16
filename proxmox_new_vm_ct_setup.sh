@@ -748,7 +748,13 @@ install_config() {
 
         sshd -t
         systemctl restart ssh
+    fi
 
+
+    if systemctl list-unit-files ssh.socket >/dev/null 2>&1; then
+        systemctl disable --now ssh.socket
+        sshd -t
+        systemctl restart ssh
     fi
 
 
