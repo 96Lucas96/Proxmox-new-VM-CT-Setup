@@ -9,6 +9,7 @@ USER_CHOICE=""
 USERNAME=""
 USER_PASS=""
 USER_PASS_STATUS=""
+USER_PASS_VERIFY=""
 SUDO_ANSWER=""
 SHELL_CHOICE=""
 ENABLE_SSH=""
@@ -206,10 +207,8 @@ add_user_pass() {
 
             0) if [[ -z "$USER_PASS" ]]; then
 
-                   whiptail --msgbox "\n You haven't entered anything, please enter a\n                user password" 10 50
+                   whiptail --msgbox "\n You haven't entered anything, please enter a\n                 user password" 10 50
                    continue
-                       else
-                           break
                fi
                ;;
 
@@ -219,7 +218,33 @@ add_user_pass() {
 
        esac
 
-    done
+    if USER_PASS_VERIFY=$(whiptail --title "$APP_NAME" --passwordbox "\nPlease verify user password:" 10 50 3>&1 1>&2 2>&3); then
+        STATUS="0"
+            else
+                STATUS="$?"
+    fi
+
+    case "$STATUS" in
+
+        0) if [[ -z "$USER_PASS_VERIFY" ]]; then
+               whiptail --msgbox "\n     You haven't entered anything, please\n          re-configure user password" 10 50
+               continue
+           fi
+
+           if [[ "$USER_PASS_VERIFY" == "$USER_PASS" ]]; then
+               return 0
+                   else
+                       whiptail --msgbox "\n  Passwords don't match, please re-configure\n                user password" 10 50
+                       USER_PASS=""
+                       USER_PASS_VERIFY=""
+           fi
+           ;;
+
+        *) exit_question
+           ;;
+
+    esac
+done
 
 }
 
