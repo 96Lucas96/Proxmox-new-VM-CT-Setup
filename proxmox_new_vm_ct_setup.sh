@@ -31,7 +31,7 @@ NTFY_TOPIC=""
 
 check_root() {
     if [[ "$EUID" -ne 0 ]]; then
-        echo "Your are not root, please switch to the root user and re-run script"
+        echo "Your are not root, please switch to the root user and re-run the script"
         exit 1
     fi
 }
@@ -102,517 +102,206 @@ main_menu() {
 }
 
 
-#Setup Trigger
+exit_question() {
+    if whiptail --title "$APP_NAME" --yes-button "Exit" --no-button "Stay" \
+        --yesno "\n        Are you sure you want to exit?" 10 50; then
+        exit 0
+    fi
+}
+
+ask_input() {
+    local kind="$1" prompt="$2" initial="${3:-}" rc
+    local output
+    if [[ "$kind" == passwordbox ]]; then
+        if output=$(whiptail --title "$APP_NAME" --ok-button "OK" --cancel-button "Back" \
+            --passwordbox "$prompt" 10 50 3>&1 1>&2 2>&3); then
+            ANSWER="$output"; return 0
+        else
+            rc=$?
+        fi
+    else
+        if output=$(whiptail --title "$APP_NAME" --ok-button "OK" --cancel-button "Back" \
+            --inputbox "$prompt" 10 50 "$initial" 3>&1 1>&2 2>&3); then
+            ANSWER="$output"; return 0
+        else
+            rc=$?
+        fi
+    fi
+    return "$rc"
+}
+
+ask_yes_no() {
+    local prompt="$1" current="${2:-Yes}" rc selection rendered
+    [[ "$current" == No ]] || current=Yes
+    printf -v rendered '%b' "$prompt"
+
+    local line shifted=""
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        if [[ -n "$line" ]]; then
+            shifted+="      $line"
+        fi
+        shifted+=$'\n'
+    done <<< "$rendered"
+    rendered="${shifted%$'\n'}"
+    if selection=$(whiptail --title "$APP_NAME" --ok-button "OK" --cancel-button "Back" \
+        --default-item "$current" --menu "${rendered}"$'\n\n\n' 15 60 2 \
+        "Yes" "" "No" "" 3>&1 1>&2 2>&3); then
+        ANSWER="$selection"; return 0
+    else
+        rc=$?
+    fi
+    return "$rc"
+}
+
+ask_shell() {
+    local rc selection default="${SHELL_CHOICE:-bash}"
+    if selection=$(whiptail --title "$APP_NAME" --ok-button "OK" --cancel-button "Back" \
+        --default-item "$default" --menu "\n\n                 Select a shell to use: \n\n\n\n" 15 60 4 \
+        "sh" "" "bash" "" "zsh" "" "fish" "" \
+        3>&1 1>&2 2>&3); then
+        ANSWER="$selection"; return 0
+    else
+        rc=$?
+    fi
+    return "$rc"
+}
+
+step_applies() {
+    case "$1" in
+        1|2|3|4) [[ "$USER_CHOICE" == Yes ]] ;;
+        6) [[ "$ENABLE_SSH" == Yes ]] ;;
+        8) [[ "$ENABLE_SSH" == Yes && "$ENABLE_AUTHKEY" == Yes ]] ;;
+        9) [[ "$ENABLE_SSH" == Yes && "$ENABLE_AUTHKEY" == Yes && -n "$SSH_KEY" ]] ;;
+        10) [[ "$ENABLE_SSH" == Yes && "$USER_CHOICE" == Yes ]] ;;
+        11) [[ "$ENABLE_SSH" == Yes ]] ;;
+        13|14) [[ "$NTFY_CHOICE" == Yes ]] ;;
+        *) return 0 ;;
+    esac
+}
+
+clear_inapplicable() {
+    if [[ "$USER_CHOICE" != Yes ]]; then
+        USERNAME=""; USER_PASS=""; USER_PASS_VERIFY=""; SUDO_ANSWER=""; SHELL_CHOICE=""
+    fi
+    if [[ "$ENABLE_SSH" != Yes ]]; then
+        ENABLE_AUTHKEY=""; SSH_KEY=""; PASSWORD_AUTH=""; ROOT_LOGIN=""; SSH_PORT=""
+    elif [[ "$ENABLE_AUTHKEY" != Yes ]]; then
+        SSH_KEY=""; PASSWORD_AUTH=""
+    fi
+    if [[ "$USER_CHOICE" != Yes ]]; then ROOT_LOGIN=""; fi
+    if [[ "$NTFY_CHOICE" != Yes ]]; then NTFY_DOMAIN=""; NTFY_TOPIC=""; fi
+}
 
 setup_questions() {
-    add_user
-    add_user_pass
-    add_to_sudo
-    change_shell
-    enable_ssh
-    edit_ssh
-    ntfy
-    hide_sensitive
-    overview
-}
-
-
-#Setup Questions
-
-exit_question() {
-     if whiptail --title "$APP_NAME" --yesno "\n        Are you sure you want to exit?" 10 50; then
-        exit 0
-            else
-                return 0
-     fi
-}
-
-add_user() {
+    local step=0 rc previous
     while true; do
-        if whiptail --title "$APP_NAME" --yesno "\n               Add a new user?" 10 50; then
-            STATUS="0"
-                else
-                    STATUS="$?"
+        if ! step_applies "$step"; then
+            ((step += 1))
+            continue
         fi
-
-        case "$STATUS" in
-
-            0) USER_CHOICE="Yes"
-               break
-               ;;
-
-            1) USER_CHOICE="No"
-               return 0
-               ;;
-
-            *) exit_question
-               ;;
-
+        rc=0
+        case "$step" in
+            0) ask_yes_no "\n\n               Add a new user?" "$USER_CHOICE" || rc=$?
+               if ((rc == 0)); then USER_CHOICE="$ANSWER"; clear_inapplicable; fi ;;
+            1) ask_input inputbox "\nUsername:" "$USERNAME" || rc=$?
+               if ((rc == 0)); then
+                   if [[ -z "$ANSWER" || ! "$ANSWER" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
+                       whiptail --msgbox "Please enter a valid username (lowercase letters, digits, _ or -)." 10 60
+                       continue
+                   fi
+                   if id "$ANSWER" &>/dev/null; then
+                       whiptail --msgbox "Username already exists." 10 50
+                       continue
+                   fi
+                   USERNAME="$ANSWER"
+               fi ;;
+            2) ask_input passwordbox "\nUser Password:" || rc=$?
+               if ((rc == 0)); then
+                   if [[ -z "$ANSWER" && -z "$USER_PASS" ]]; then
+                       whiptail --msgbox "Please enter a user password." 10 50
+                       continue
+                   fi
+                   if [[ -n "$ANSWER" ]]; then
+                       USER_PASS="$ANSWER"
+                       # Verification is part of the same step; Back returns to password entry.
+                       if ask_input passwordbox "\nPlease verify user password:"; then
+                           if [[ "$ANSWER" != "$USER_PASS" ]]; then
+                               whiptail --msgbox "Passwords don't match. Please try again." 10 50
+                               USER_PASS=""; continue
+                           fi
+                           USER_PASS_VERIFY="$ANSWER"
+                       else
+                           rc=$?
+                           if ((rc == 1)); then continue; fi
+                       fi
+                   fi
+               fi ;;
+            3) ask_yes_no "\n\n         Add user to the sudo group?" "$SUDO_ANSWER" || rc=$?
+               if ((rc == 0)); then SUDO_ANSWER="$ANSWER"; fi ;;
+            4) ask_shell || rc=$?
+               if ((rc == 0)); then SHELL_CHOICE="$ANSWER"; fi ;;
+            5) ask_yes_no "\n\n         Would you like to enable SSH?" "$ENABLE_SSH" || rc=$?
+               if ((rc == 0)); then ENABLE_SSH="$ANSWER"; clear_inapplicable; fi ;;
+            6) ask_yes_no "\n\n     Would you like to access SSH with an\n              authorization key?" "$ENABLE_AUTHKEY" || rc=$?
+               if ((rc == 0)); then ENABLE_AUTHKEY="$ANSWER"; clear_inapplicable; fi ;;
+            7) # Reserved for navigation compatibility; key entry is step 8.
+               ((step += 1)); continue ;;
+            8) ask_input inputbox "\nEnter the PUBLIC KEY of the device you want to connect FROM:" "$SSH_KEY" || rc=$?
+               if ((rc == 0)); then
+                   if [[ -z "$ANSWER" ]]; then
+                       whiptail --msgbox "Please enter an SSH public key." 10 50; continue
+                   fi
+                   SSH_KEY="$ANSWER"
+               fi ;;
+            9) ask_yes_no "\n\n   Would you like to disable SSH password\n               authentication" "$PASSWORD_AUTH" || rc=$?
+               if ((rc == 0)); then PASSWORD_AUTH="$ANSWER"; fi ;;
+            10) ask_yes_no "\n\n   Would you like to disable SSH root login?" "$ROOT_LOGIN" || rc=$?
+                if ((rc == 0)); then ROOT_LOGIN="$ANSWER"; fi ;;
+            11) ask_input inputbox "\nSSH Port:" "${SSH_PORT:-22}" || rc=$?
+                if ((rc == 0)); then
+                    if [[ ! "$ANSWER" =~ ^[0-9]+$ ]] || ((10#$ANSWER < 1 || 10#$ANSWER > 65535)); then
+                        whiptail --msgbox "Please enter a valid SSH port (1-65535)." 10 50; continue
+                    fi
+                    SSH_PORT="$ANSWER"
+                fi ;;
+            12) ask_yes_no "\n\n   Would you like to add an NTFY SSH alert?" "$NTFY_CHOICE" || rc=$?
+                if ((rc == 0)); then NTFY_CHOICE="$ANSWER"; clear_inapplicable; fi ;;
+            13) ask_input inputbox "\nEnter NTFY domain WITHOUT the topic:" "$NTFY_DOMAIN" || rc=$?
+                if ((rc == 0)); then
+                    if [[ -z "$ANSWER" ]]; then whiptail --msgbox "Please enter an NTFY domain." 10 50; continue; fi
+                    NTFY_DOMAIN="$ANSWER"
+                fi ;;
+            14) ask_input inputbox "\nNTFY Topic:" "$NTFY_TOPIC" || rc=$?
+                if ((rc == 0)); then
+                    if [[ -z "$ANSWER" ]]; then whiptail --msgbox "Please enter an NTFY topic." 10 50; continue; fi
+                    NTFY_TOPIC="$ANSWER"
+                fi ;;
+            15) hide_sensitive
+                overview || rc=$?
+                if ((rc == 0)); then install_config; return 0; fi ;;
         esac
-
-    done
-
-
-    while true; do
-         if USERNAME=$(whiptail --title "$APP_NAME" --inputbox "\nUsername:" 10 50 3>&1 1>&2 2>&3); then
-             STATUS="0"
-                 else
-                     STATUS="$?"
-         fi
-
-         case "$STATUS" in
-
-          0) if [[ -z "$USERNAME" ]]; then
-                 whiptail --msgbox "\n You haven't entered anything, please enter a\n                   username" 10 50
-                 continue
-             fi
-
-             if [[ ! "$USERNAME" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
-                 whiptail --msgbox "\n     Username contains invalid characters" 10 50
-                 continue
-             fi
-
-             if id "$USERNAME" &>/dev/null; then
-                 whiptail --msgbox "\n           Username already exists" 10 50
-                 continue
-             fi
-
-             if [[ -n "$USERNAME" ]]; then
-                 return 0
-             fi
-             ;;
-
-          *) exit_question
-             ;;
+        case "$rc" in
+            0) ((step += 1)) ;;
+            1) previous=$((step - 1))
+               while ((previous >= 0)); do
+                   if step_applies "$previous" && ((previous != 7)); then break; fi
+                   ((previous -= 1))
+               done
+               if ((previous < 0)); then return 0; fi
+               step=$previous ;;
+            255) exit_question ;;
+            *) exit_question ;;
         esac
     done
-}
-
-
-add_user_pass() {
-
-    if [[ -z "$USERNAME" ]]; then
-       return 0
-    fi
-
-    while true; do
-
-        if USER_PASS=$(whiptail --title "$APP_NAME" --passwordbox "\nUser Password:" 10 50 3>&1 1>&2 2>&3); then
-            STATUS="0"
-                else
-                    STATUS="$?"
-        fi
-
-        case "$STATUS" in
-
-            0) if [[ -z "$USER_PASS" ]]; then
-
-                   whiptail --msgbox "\n You haven't entered anything, please enter a\n                 user password" 10 50
-                   continue
-               fi
-               ;;
-
-
-           *) exit_question
-              ;;
-
-       esac
-
-    if USER_PASS_VERIFY=$(whiptail --title "$APP_NAME" --passwordbox "\nPlease verify user password:" 10 50 3>&1 1>&2 2>&3); then
-        STATUS="0"
-            else
-                STATUS="$?"
-    fi
-
-    case "$STATUS" in
-
-        0) if [[ -z "$USER_PASS_VERIFY" ]]; then
-               whiptail --msgbox "\n     You haven't entered anything, please\n          re-configure user password" 10 50
-               continue
-           fi
-
-           if [[ "$USER_PASS_VERIFY" == "$USER_PASS" ]]; then
-               return 0
-                   else
-                       whiptail --msgbox "\n  Passwords don't match, please re-configure\n                user password" 10 50
-                       USER_PASS=""
-                       USER_PASS_VERIFY=""
-           fi
-           ;;
-
-        *) exit_question
-           ;;
-
-    esac
-done
-
-}
-
-add_to_sudo() {
-
-    if [[ -z "$USERNAME" ]]; then
-       return 0
-    fi
-
-    while true; do
-
-        if whiptail --title "$APP_NAME" --yesno "\n         Add user to the sudo group?" 10 50; then
-            STATUS="0"
-                else
-                    STATUS="$?"
-        fi
-
-            case "$STATUS" in
-
-                0) SUDO_ANSWER="Yes"
-                   return 0
-                   ;;
-
-                1) SUDO_ANSWER="No"
-                   return 0
-                   ;;
-
-                *) exit_question
-                   ;;
-
-            esac
-    done
-}
-
-
-change_shell() {
-    if [[ -z "$USERNAME" ]]; then
-        return 0
-
-    fi
-
-  while true; do
-
-    if SHELL_CHOICE=$(whiptail --title "$APP_NAME" --menu "\n\n\n                 Select a shell to use: \n\n\n\n" 20 60 4 \
-    "1." "Sh" \
-    "2." "Bash" \
-    "3." "Zsh" \
-    "4." "Fish"  \
-    3>&1 1>&2 2>&3); then
-
-        STATUS="0"
-            else
-                STATUS="$?"
-    fi
-
-        case "$STATUS" in
-
-          0)
-
-            case "$SHELL_CHOICE" in
-
-                1.) SHELL_CHOICE="sh"
-                    ;;
-
-                2.) SHELL_CHOICE="bash"
-                    ;;
-
-                3.) SHELL_CHOICE="zsh"
-                    ;;
-
-                4.) SHELL_CHOICE="fish"
-                    ;;
-            esac
-            return 0
-            ;;
-
-         *) exit_question
-            ;;
-
-       esac
-
-  done
-
-}
-
-enable_ssh() {
-
-while true; do
-
-    if whiptail --title "$APP_NAME" --yesno "\n         Would you like to enable SSH?"  10 50; then
-        STATUS="0"
-            else
-                STATUS="$?"
-    fi
-
-        case "$STATUS" in
-
-           0) ENABLE_SSH="Yes"
-              break
-              ;;
-
-           1) ENABLE_SSH="No"
-              return 0
-              ;;
-
-           *) exit_question
-              ;;
-        esac
-done
-
-
-while true; do
-
-    if whiptail --title "$APP_NAME" --yesno "\n     Would you like to access SSH with an\n              authorization key?" 10 50; then
-        STATUS="0"
-            else
-                STATUS="$?"
-    fi
-
-    case "$STATUS" in
-
-     0) ENABLE_AUTHKEY="Yes"
-        break
-        ;;
-
-     1) ENABLE_AUTHKEY="No"
-        return 0
-        ;;
-
-
-     *) exit_question
-        ;;
-   esac
-done
-
-while true; do
-
-     if SSH_KEY=$(whiptail --title "$APP_NAME" --inputbox "\nPublic Key:" 10 50 3>&1 1>&2 2>&3); then
-         STATUS="0"
-             else
-                 STATUS="$?"
-     fi
-
-         case "$STATUS" in
-
-             0) if [[ -z "$SSH_KEY" ]]; then
-                    whiptail --msgbox "\nYou haven't entered anything, please enter an\n                   SSH key" 10 50
-                    continue
-                fi
-
-                if [[ -n "$SSH_KEY" ]]; then
-                    break
-                fi
-                ;;
-
-            *) exit_question
-               ;;
-
-         esac
-done
-
-}
-
-edit_ssh() {
-
-while true; do
-
-     if [[ -z "$SSH_KEY" ]]; then
-         break
-     fi
-
-     if whiptail --title "$APP_NAME" --yesno "\n   Would you like to disable SSH password\n               authentication" 10 50; then
-
-         STATUS="0"
-           else
-              STATUS="$?"
-     fi
-
-     case "$STATUS" in
-
-         0) PASSWORD_AUTH="Yes"
-            break
-            ;;
-
-         1) PASSWORD_AUTH="No"
-            break
-            ;;
-
-         *) exit_question
-            ;;
-     esac
-
-done
-
-while true; do
-
-    if [[ "$ENABLE_SSH" == "No" ]]; then
-        return 0
-    fi
-
-    if [[ "$USER_CHOICE" == "No" ]]; then
-        break
-    fi
-
-         if whiptail --title "$APP_NAME" --yesno "\n   Would you like to disable SSH root login?" 10 50; then
-             STATUS="0"
-                 else
-                     STATUS="$?"
-         fi
-
-      case "$STATUS" in
-
-         0) ROOT_LOGIN="Yes"
-            break
-            ;;
-
-         1) ROOT_LOGIN="No"
-            break
-            ;;
-
-         *) exit_question
-            ;;
-     esac
-done
-
-while true; do
-
-       if SSH_PORT=$(whiptail --title "$APP_NAME" --inputbox "\nSSH Port:" 10 50 3>&1 1>&2 2>&3); then
-           STATUS="0"
-               else
-                   STATUS="$?"
-       fi
-
-           case "$STATUS" in
-
-              0) if [[ -z "$SSH_PORT" ]]; then
-                     whiptail --msgbox "\nYou haven't entered anything, please enter a\n                 port number" 10 50
-                     continue
-                 fi
-
-                 if [[ ! "$SSH_PORT" =~ ^[0-9]+$ ]]; then
-                     whiptail --msgbox "\n         Please enter numbers only" 10 50
-                     continue
-                 fi
-
-                 if (( "$SSH_PORT" < 1 || "$SSH_PORT" > 65535 )); then
-                     whiptail --msgbox "\n     Please enter a valid SSH port number" 10 50
-                     continue
-                 fi
-                 break
-                 ;;
-
-             *) exit_question
-                ;;
-          esac
-done
-
-}
-
-
-ntfy() {
-
-while true; do
-
-    if whiptail --title "$APP_NAME" --yesno "\n   Would you like to add an NTFY SSH alert?" 10 50; then
-        STATUS="0"
-            else
-                STATUS="$?"
-    fi
-
-    case "$STATUS" in
-
-         0) NTFY_CHOICE="Yes"
-            break
-            ;;
-
-         1) NTFY_CHOICE="No"
-            return 0
-            ;;
-
-         *) exit_question
-            ;;
-
-    esac
-done
-
-while true; do
-
-    if [[ "$NTFY_CHOICE" == "No" ]]; then
-        return 0
-    fi
-
-
-    if NTFY_DOMAIN=$(whiptail --title "$APP_NAME" --inputbox "\nNTFY Domain:" 10 50 3>&1 1>&2 2>&3); then
-       STATUS="0"
-            else
-                STATUS="$?"
-    fi
-
-    case "$STATUS" in
-
-        0) if [[ -z "$NTFY_DOMAIN" ]]; then
-
-               whiptail --msgbox "\nYou haven't entered anything, please enter an\n                 NTFY domain" 10 50
-               continue
-                   else
-                       break
-           fi
-           ;;
-
-
-        *) exit_question
-           ;;
-
-    esac
-done
-
-while true; do
-
-    if NTFY_TOPIC=$(whiptail --title "$APP_NAME" --inputbox "\nNTFY Topic:" 10 50 3>&1 1>&2 2>&3); then
-        STATUS="0"
-            else
-                STATUS="$?"
-    fi
-
-    case "$STATUS" in
-
-        0) if [[ -z "$NTFY_TOPIC" ]]; then
-
-               whiptail --msgbox "\nYou haven't entered anything, please enter an\n                 NTFY topic" 10 50
-               continue
-                   else
-                       return 0
-
-           fi
-           ;;
-
-       *) exit_question
-          ;;
-
-    esac
-done
-
 }
 
 hide_sensitive() {
-
-if [[ -z "$USER_PASS" ]]; then
-
-    USER_PASS_STATUS="Not Configured"
-        else
-            USER_PASS_STATUS="Configured"
-
-fi
-
-
-if [[ -z "$SSH_KEY" ]]; then
-
-    SSH_KEY_STATUS="Not Configured"
-        else
-            SSH_KEY_STATUS="Configured"
-fi
-
+    if [[ -z "$USER_PASS" ]]; then USER_PASS_STATUS="Not Configured"; else USER_PASS_STATUS="Configured"; fi
+    if [[ -z "$SSH_KEY" ]]; then SSH_KEY_STATUS="Not Configured"; else SSH_KEY_STATUS="Configured"; fi
 }
 
-
 overview() {
-  OVERVIEW=$(cat << EOF
+    OVERVIEW=$(cat << EOF
                                       OVERVIEW
 =====================================================================================
 
@@ -649,35 +338,14 @@ overview() {
 
 EOF
 )
-
-while true; do
-
-    if whiptail --title "$APP_NAME" --yesno "$OVERVIEW" --scrolltext 30 90; then
-        STATUS="0"
-            else
-                STATUS="$?"
+    local rc
+    if whiptail --title "$APP_NAME" --yes-button "OK" --no-button "Back" \
+        --yesno "$OVERVIEW" --scrolltext 30 90; then
+        return 0
+    else
+        rc=$?
     fi
-
-       case "$STATUS" in
-
-         0) install_config
-            return 0
-            ;;
-
-         1) if whiptail --title "$APP_NAME" --yesno "\n     Would you like to restart the script?" 10 50; then
-               main_menu
-                   else
-                       exit_question
-            fi
-            ;;
-
-        *) exit_question
-           ;;
-
-      esac
-
-done
-
+    return "$rc"
 }
 
 
